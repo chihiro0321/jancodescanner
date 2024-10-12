@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>バーコード読み取りで商品名自動入力</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background-color: #f4f4f4;
+        }
+        button {
+            cursor: pointer;
+            background-color: #f44336;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+        }
+        #interactive {
+            position: relative;
+            width: 100%;
+            height: auto;
+            margin-bottom: 20px;
+        }
+        #interactive video {
+            width: 100%;
+        }
+        #barcode-result {
+            font-size: 1.2em;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>カメラでJANコードのバーコードを読み取る</h1>
+
+    <div id="interactive" class="viewport"></div>
+    <div id="barcode-result">バーコード: <span id="barcode-value">読み取り待機中...</span></div>
+
+    <form id="productForm">
+        <label for="janCode">JANコード:</label>
+        <input type="text" id="janCode" required><br><br>
+
+        <label for="productName">商品名:</label>
+        <input type="text" id="productName" required><br><br>
+
+        <label for="supermarket">スーパー名:</label>
+        <input type="text" id="supermarket" required><br><br>
+
+        <label for="price">価格:</label>
+        <input type="number" id="price" required><br><br>
+
+        <button type="submit">商品を追加</button>
+    </form>
+
+    <h2>最安値リスト</h2>
+    <table id="priceTable">
+        <thead>
+            <tr>
+                <th>JANコード</th>
+                <th>商品名</th>
+                <th>最安値</th>
+                <th>スーパー名</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- 商品がここに追加される -->
+        </tbody>
+    </table>
+
+    <script>
+        // 商品データベース (JANコードと商品名の対応リスト)
+        const productDatabase = {
+            "4902430740009": "カップヌードル",
+            "4902105020003": "コカ・コーラ",
+            "4901777018687": "キットカット",
+            // 他の商品データも追加可能
+        };
+
+        // JANコードごとの商品を管理するオブジェクト
+        const products = {};
+
+        // QuaggaJSでカメラからバーコードを読み取る (解像度を上げて背面カメラを使用)
+        Quagga.init({
+            inputStream: {
+                name: "Live",
+                type: "LiveStream",
+                target: document.querySelector('#interactive'), // カメラの映像を表示するHTML要素
+                constraints: {
+                    width: 1280,  // カメラ映像の解像度を指定
+                    height: 720,
+                    facingMode: "environment" // 背面カメラを使用
+                }
+            },
+            decoder: {
+                readers: ["ean_reader"]  // JANコード (EAN-13) を読み取る設定
+            }
+        }, function(err) {
+            if (err) {
+                console.error(err);
+                return;
+            }
+            console.log("QuaggaJS 初期化完了");
+            Quagga.start();  // カメラのストリーム開始
+        });
+
+        // バーコードが検出されたときにフォームのJANコードと商品名に自動入力
+        Quagga.onDetected(function(result) {
+            const janCode = result.codeResult.code;
+            document.getElementById('janCode').value = janCode;  // JANコード入力欄に反映
+
+            // 商品名がデータベースにある場合は自動で商品名を入力
+            if (productDatabase[janCode]) {
+                document.getElementById('productName').value = productDatabase[janCode];
+            } else {
+                document.getElementById('productName').value = "不明な商品";
+            }
+
+            document.getElementById('barcode-value').innerText = janCode;  // 画面にも表示
+            console.log("バーコード検出: " + janCode);
+        });
+
+        // フォーム送信時に商品を追加する
+        document.getElementById('productForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            // フォームから入力されたデータを取得
+            const janCode = document.getElementById('janCode').value;
+            const productName = document.getElementById('productName').value;
+            const supermarket = document.getElementById('supermarket').value;
+            const price = parseFloat(document.getElementById('price').value);
+
+            // 新しい商品を追加（または最安値を更新）
+            if (!products[janCode]) {
+                products[janCode] = [];
+            }
+
+            products[janCode].push({ productName, supermarket, price });
+
+            // テーブルを更新
+            updateTable();
+            
+            // フォームをリセット
+            document.getElementById('productForm').reset();
+        });
+
+        // 商品リストを表示する
+        function updateTable() {
+            const tbody = document.querySelector('#priceTable tbody');
+            tbody.innerHTML = ''; // テーブルをクリア
+
+            for (const janCode in products) {
+                const productList = products[janCode];
+                
+                // 最安値を持つ商品を探す
+                let cheapestProduct = productList.reduce((cheapest, product) => {
+                    return product.price < cheapest.price ? product : cheapest;
+                }, productList[0]);
+
+                const row = document.createElement('tr');
+
+                row.innerHTML = `
+                    <td>${janCode}</td>
+                    <td>${cheapestProduct.productName}</td>
+                    <td>${cheapestProduct.price}円</td>
+                    <td>${cheapestProduct.supermarket}</td>
+                    <td><button onclick="removeProduct('${janCode}', ${cheapestProduct.price})">削除</button></td>
+                `;
+
+                tbody.appendChild(row);
+            }
+        }
+
+        // 商品を削除する
+        function removeProduct(janCode, price) {
+            if (products[janCode]) {
+                // 指定した価格の商品を削除
+                products[janCode] = products[janCode].filter(product => product.price !== price);
+
+                // 商品が残っていない場合はオブジェクトから削除
+                if (products[janCode].length === 0) {
+                    delete products[janCode];
+                }
+
+                // テーブルを更新
+                updateTable();
+            }
+        }
+    </script>
+</body>
+</html>
